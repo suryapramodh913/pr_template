@@ -1,0 +1,139 @@
+name: Greeting Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'GitHub username to greet (defaults to triggering user)'
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to get commit information
+      
+      - name: Get user information
+        id: user-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Determine which user to greet
+          if [ -n "${{ inputs.username }}" ]; then
+            USERNAME="${{ inputs.username }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            USERNAME="${{ github.event.pull_request.user.login }}"
+          else
+            USERNAME="${{ github.actor }}"
+          fi
+          
+          echo "username=$USERNAME" >> $GITHUB_OUTPUT
+          
+          # Get user profile information
+          USER_DATA=$(gh api /users/$USERNAME)
+          USER_NAME=$(echo "$USER_DATA" | jq -r '.name // .login')
+          USER_ID=$(echo "$USER_DATA" | jq -r '.id')
+          USER_URL=$(echo "$USER_DATA" | jq -r '.html_url')
+          
+          echo "user_name=$USER_NAME" >> $GITHUB_OUTPUT
+          echo "user_id=$USER_ID" >> $GITHUB_OUTPUT
+          echo "user_url=$USER_URL" >> $GITHUB_OUTPUT
+      
+      - name: Get last commit by user
+        id: last-commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          USERNAME="${{ steps.user-info.outputs.username }}"
+          
+          # Get the last commit by this user in the repository
+          COMMIT_DATA=$(gh api "/repos/${{ github.repository }}/commits?author=$USERNAME&per_page=1" | jq '.[0]')
+          
+          if [ "$COMMIT_DATA" = "null" ] || [ -z "$COMMIT_DATA" ]; then
+            echo "No commits found for user $USERNAME"
+            echo "has_commits=false" >> $GITHUB_OUTPUT
+          else
+            COMMIT_SHA=$(echo "$COMMIT_DATA" | jq -r '.sha')
+            COMMIT_MESSAGE=$(echo "$COMMIT_DATA" | jq -r '.commit.message')
+            COMMIT_DATE=$(echo "$COMMIT_DATA" | jq -r '.commit.author.date')
+            COMMIT_URL=$(echo "$COMMIT_DATA" | jq -r '.html_url')
+            
+            echo "has_commits=true" >> $GITHUB_OUTPUT
+            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+            echo "commit_message<<EOF" >> $GITHUB_OUTPUT
+            echo "$COMMIT_MESSAGE" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+            echo "commit_url=$COMMIT_URL" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Display greeting
+        run: |
+          echo "╔═══════════════════════════════════════════════════════════════════════════╗"
+          echo "║                          🎉 GREETING AGENT 🎉                            ║"
+          echo "╚═══════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Hello, ${{ steps.user-info.outputs.user_name }}! 👋"
+          echo ""
+          echo "Welcome! I'm your friendly greeting agent, here to acknowledge your great work!"
+          echo ""
+          
+          if [ "${{ steps.last-commit.outputs.has_commits }}" = "true" ]; then
+            echo "📝 Your Last Commit Information:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "  📌 Commit SHA: ${{ steps.last-commit.outputs.commit_sha }}"
+            echo ""
+            echo "  💬 Message: ${{ steps.last-commit.outputs.commit_message }}"
+            echo ""
+            echo "  📅 Date: ${{ steps.last-commit.outputs.commit_date }}"
+            echo ""
+            echo "  🔗 Link: ${{ steps.last-commit.outputs.commit_url }}"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          else
+            echo "📝 No commits found for this user in this repository yet."
+            echo ""
+          fi
+          
+          echo ""
+          echo "Keep up the excellent work! 🚀"
+      
+      - name: Create summary
+        run: |
+          echo "## 🎉 Greeting Agent Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**User:** [${{ steps.user-info.outputs.user_name }}](${{ steps.user-info.outputs.user_url }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.last-commit.outputs.has_commits }}" = "true" ]; then
+            echo "### 📝 Last Commit" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **SHA:** \`${{ steps.last-commit.outputs.commit_sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Date:** ${{ steps.last-commit.outputs.commit_date }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Link:** ${{ steps.last-commit.outputs.commit_url }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Message:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "${{ steps.last-commit.outputs.commit_message }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No commits found for this user in this repository." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "Keep up the excellent work! 🚀" >> $GITHUB_STEP_SUMMARY
